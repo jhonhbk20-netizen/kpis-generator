@@ -1,0 +1,12 @@
+# Reportes crudos reales (nunca deben subirse a este repo)
+*.xlsx
+*.xls
+*.csv
+*.pptx
+
+# ...salvo los datos de ejemplo generados por generar_datos_demo.py
+!ejemplos/**
+
+__pycache__/
+*.pyc
+.DS_Store
