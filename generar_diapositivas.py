@@ -52,7 +52,8 @@ NEGRO      = RGBColor(0x20, 0x20, 0x20)
 FONDO_GRIS = RGBColor(0xF5, 0xF5, 0xF5)
 
 FUENTE = "Calibri"
-MESES_LABEL = {"2026-04": "Abr-26", "2026-05": "May-26", "2026-06": "Jun-26", "2026-07": "Jul-26"}
+MESES_LABEL = {"2026-04": "Abr-26", "2026-05": "May-26", "2026-06": "Jun-26",
+               "2026-07": "Jul-26", "2026-08": "Ago-26"}
 
 # Tamaño de diapositiva 16:9 (ancho, alto)
 SLIDE_W, SLIDE_H = Cm(33.87), Cm(19.05)
@@ -226,21 +227,25 @@ def panel_grafico_lineas(slide, x, y, w, h, titulo, categorias, series, num_fmt=
 # ---------------------------------------------------------------------------
 def cargar_kpis():
     import pandas as pd
-    f_det = g.buscar_archivo("detalle", "lote")
+    f_det, f_tie = g.buscar_detalle()
     f_cts = g.buscar_archivo("cts", "individual")
-    f_ext = g.buscar_archivo("extorno")
+    f_ext = g.buscar_archivos("extorno")
     f_abo = g.buscar_archivo("abono", "sueldo")
-    f_req = g.buscar_archivo("requerimiento", ext=("csv",))
     if not f_det:
-        print("\nERROR: no encuentro 'Detalle de Pago Lote y CTS'.")
+        print("\nERROR: no encuentro 'Detalle de Pago Lote y CTS' de Oficina Principal.")
         print("Corre primero:  python generar_datos_demo.py")
         sys.exit(1)
-    det = g.leer_detalle_pago_lote(f_det)
+    det = g.leer_detalle_centrales(f_det, origen="CENTRALES")
+    det_tie = g.leer_detalle_centrales(f_tie, origen="TIENDAS") if f_tie else pd.DataFrame()
     cts = g.leer_detalle_cts(f_cts) if f_cts else pd.DataFrame()
     ext = g.leer_extornos(f_ext) if f_ext else pd.DataFrame()
     abo = g.leer_abono(f_abo) if f_abo else pd.DataFrame()
-    req = g.leer_requerimientos(f_req) if f_req else pd.DataFrame()
-    return g.calcular(det, cts, ext, abo, req)
+    meses_info = g.clasificar_meses(det, g.fecha_proceso(f_det))
+    K = g.calcular(det, cts, ext, abo, meses_info=meses_info)
+    K["eficiencia"] = g.sintetizar_eficiencia(K["eficiencia"])
+    K["centralizacion_real"] = g.calcular_centralizacion(det, det_tie)
+    g.fusionar_absorcion_en_resumen(K)
+    return K
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +256,7 @@ def construir_slide_kpis_1(slide, K, mes_obj, meses):
                   f"Pagos Masivos y CTS · {MESES_LABEL.get(mes_obj, mes_obj)} · Comparativo del periodo")
 
     resumen = {r["Mes"]: r for r in K["resumen"]}
+    eficiencia = {e["Mes"]: e for e in K["eficiencia"]}
     cats = [MESES_LABEL.get(m, m) for m in meses]
 
     y0 = Cm(2.55)
@@ -286,8 +292,8 @@ def construir_slide_kpis_1(slide, K, mes_obj, meses):
 
     # ---- Panel 3: Ritmo de trabajo del equipo ----
     y1 = y0 + alto_panel + Cm(0.35)
-    op_p = [resumen[m]["Ops/dia (persona)"] for m in meses]
-    op_c = [resumen[m]["Ops/dia (calend.)"] for m in meses]
+    op_p = [eficiencia[m]["Ops/Dia (persona-dia)"] for m in meses]
+    op_c = [eficiencia[m]["Ops/Dia (calendario)"] for m in meses]
     panel_grafico_lineas(slide, x1, y1, ancho_panel, alto_panel - Cm(2.1),
                           "Cuántas transacciones hace cada persona en un día", cats,
                           [("Contando solo días que trabajó cada uno", op_p, ROJO),
@@ -295,7 +301,7 @@ def construir_slide_kpis_1(slide, K, mes_obj, meses):
                           num_fmt="#,##0")
     tarjeta_comentario(slide, x1, y1 + alto_panel - Cm(2.1), ancho_panel, Cm(2.1),
                         "QUÉ SIGNIFICA",
-                        f"{MESES_LABEL.get(mes_obj, mes_obj)}: cada persona atendió ~{resumen[mes_obj]['Ops/dia (persona)']:.0f} "
+                        f"{MESES_LABEL.get(mes_obj, mes_obj)}: cada persona atendió ~{eficiencia[mes_obj]['Ops/Dia (persona-dia)']:.0f} "
                         f"transacciones por día trabajado. La brecha con la línea naranja son días sin actividad.")
 
     # ---- Panel 4: Errores que se revirtieron (extornos) ----
@@ -324,16 +330,22 @@ def construir_slide_kpis_1(slide, K, mes_obj, meses):
     # ---- Franja inferior: tarjetas de indicadores clave ----
     y2 = y1 + alto_panel + Cm(0.3)
     jul = resumen[mes_obj]
+    cob = {(c["Mes"], c["Familia"]): c for c in
+           (K.get("centralizacion_real") or {}).get("cobertura", [])}
+    cob_pago = cob.get((mes_obj, "Pago Lote"))
+    cob_cts = cob.get((mes_obj, "Deposito CTS"))
     stats = [
         (f"{jul['K5 Ratio Asist.']}x" if jul["K5 Ratio Asist."] != "N/A" else "N/A",
          "Diferencia de carga entre los 2 asistentes", "no debería pasar el doble"),
         (f"{jul['K5a % Analista']*100:.0f}%",
          "Trabajo operativo que aún hace el analista", "debería bajar de 10%"),
-        (f"{jul['K7 % Cobert. Pago']*100:.0f}%",
-         "Agencias que ya usan Pago en Lote", f"de {g.TOTAL_TIENDAS_RED} agencias en total"),
-        (f"{jul['K8 % Cobert. CTS']*100:.0f}%",
-         "Agencias que ya usan CTS en Lote", f"de {g.TOTAL_TIENDAS_RED} agencias en total"),
-        (f"{jul['K9 Empleadores']}",
+        (f"{cob_pago['% Cobertura']*100:.0f}%" if cob_pago else "—",
+         "Agencias con convenio que ya usan Pago en Lote",
+         f"de {cob_pago['Universo']} agencias con convenio" if cob_pago else None),
+        (f"{cob_cts['% Cobertura']*100:.0f}%" if cob_cts else "—",
+         "Agencias que ya usan CTS en Lote",
+         f"de {cob_cts['Universo']} agencias" if cob_cts else None),
+        (f"{jul['Empleadores CTS']}",
          "Empresas distintas atendidas en CTS este mes", None),
     ]
     n = len(stats)

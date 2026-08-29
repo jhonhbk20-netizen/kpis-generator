@@ -4,18 +4,30 @@ Automatización en Python que toma los reportes crudos de un equipo de
 backoffice (pagos masivos, depósitos de CTS, extornos, abonos y un buzón de
 requerimientos) y en segundos genera:
 
-1. **Un Excel de KPIs** con 8 hojas: resumen ejecutivo, detalle por operador,
-   eficiencia, tasa de extornos, tiempo estimado de procesamiento,
-   centralización, buzón de requerimientos y gráficos nativos de Excel.
+1. **Un Excel de KPIs**: una hoja de **Cálculos** con todas las tablas
+   (resumen ejecutivo con fórmulas de Excel, detalle por operador,
+   eficiencia, tasa de extornos, aperturas y abonos, centralización, buzón
+   de requerimientos), una hoja de **Gráficos** nativos y una de
+   **Explicación** que documenta la fórmula y la fuente de cada KPI.
 2. **Una presentación de PowerPoint** con las diapositivas de KPIs y gestión
    operativa listas para el informe mensual, con gráficos, tarjetas de
    "qué significa" en lenguaje simple y tabla de mejoras solicitadas.
 
 Este proyecto nació para automatizar un proceso que antes tomaba varias horas
-manuales cada mes (cruzar 5 reportes distintos, calcular ~15 indicadores y
-armar las diapositivas a mano). Aquí se publica **sin los datos reales** de
-la empresa donde se usa: nombres de usuarios, agencias, cifras y hasta el
-nombre del equipo/área se reemplazaron por datos ficticios, y la plantilla
+manuales cada mes (cruzar reportes distintos, calcular indicadores y armar
+las diapositivas a mano), y despues siguió creciendo a medida que aparecían
+casos reales que un cálculo ingenuo no resolvía bien: meses piloto o
+atípicos que no debían compararse contra el resto, personal de apoyo
+rotativo que distorsionaba la productividad del equipo fijo, o la diferencia
+entre "cuántas agencias ya se sumaron" y "cuánto de lo que ya está dentro
+del alcance realmente lo ejecuta el equipo". Ese historial de decisiones de
+diseño es la parte más interesante del repo — se explica en detalle en
+[**Metodología**](#metodología) más abajo.
+
+Aquí se publica **sin los datos reales** de la empresa donde se usa: nombres
+de usuarios, agencias, cifras y hasta el nombre del equipo/área se
+reemplazaron por datos ficticios (con una historia coherente, ver
+[`generar_datos_demo.py`](generar_datos_demo.py)), y la plantilla
 corporativa de PowerPoint se sustituyó por una presentación generada desde
 cero.
 
@@ -40,21 +52,27 @@ para ver el resultado sin ejecutar nada.
 
 ## Cómo usarlo con tus propios datos
 
-`generar_kpis.py` detecta automáticamente, por el NOMBRE del archivo, los 5
+`generar_kpis.py` detecta automáticamente, por el NOMBRE del archivo, los
 reportes que necesita (acepta sufijos tipo "(1)", "(2)", copias, etc.):
 
 | Archivo esperado (el nombre debe contener...) | Contenido |
 |---|---|
-| `detalle` + `lote` (.xlsx) | Pago Lote + Depósito Lote CTS, dos secciones apiladas |
+| `detalle` + `lote` + `oficina principal` (.xlsx) | Pago Lote, Depósito CTS, Aperturas y Pendientes que ejecuta **el equipo** |
+| `detalle` + `lote` + `tienda` (.xlsx) | Lo mismo, pero ejecutado **por las agencias** (se usa para medir centralización) |
 | `cts` + `individual` (.xlsx) | CTS individual por cliente |
-| `extorno` (.xlsx) | Reversiones de transacciones |
+| `extorno` (.xlsx) | Reversiones de transacciones (acepta varios archivos a la vez) |
 | `abono` + `sueldo` (.xlsx) | Abono de sueldos y CTS de toda la red de agencias |
 | `requerimiento` (.csv, separado por `;`) | Buzón de solicitudes de clientes |
+
+Si solo tienes el archivo antiguo sin partir en dos, `buscar_detalle()` lo
+toma igual como "Oficina Principal" (formato de respaldo).
 
 Edita al inicio de `generar_kpis.py`:
 - `ROLES`: usuarios de tu equipo y su rol (analista/asistentes).
 - `TIENDA_PROPIA`: el nombre de tu oficina/agencia centralizadora.
-- `TOTAL_TIENDAS_RED`: cantidad de agencias de tu red (denominador de cobertura).
+- `TOTAL_TIENDAS_RED`: cantidad de agencias de tu red (denominador de cobertura de CTS).
+- `TIENDAS_CONVENIO`: agencias con convenio para Pago Lote; `None` para auto-detectar de la data.
+- `FUERA_UNIVERSO_POR_FAMILIA`: agencias que operan una familia sin pertenecer a su universo (anomalías a excluir).
 - `MIN_POR_PAGO_LOTE` / `MIN_POR_CTS`: supuestos de tiempo por transacción.
 
 Y en `generar_diapositivas.py`:
@@ -70,16 +88,52 @@ Y en `generar_diapositivas.py`:
 | K1 / K2 | Volumen y monto de Pago Lote |
 | K3 / K4 | Volumen y monto de depósitos CTS |
 | K5 / K5a | Balance de carga entre asistentes / % ejecutado por el analista |
-| K6 | % de CTS de la red resuelto de forma centralizada |
-| K7 / K8 | Cobertura geográfica (agencias atendidas) de Pago Lote y CTS |
-| K9 | Empleadores distintos atendidos en CTS |
-| Eficiencia | Transacciones por persona-día vs. por día calendario |
-| Extornos | Tasa de reversiones, separando error de usuario/sistema/cliente |
-| Tiempo estimado | Horas de trabajo estimadas a partir del volumen |
+| K6a Eficacia | De lo que ya está dentro del alcance, cuánto lo ejecuta el equipo (no cobertura) |
+| K6b Cobertura | Cuántas agencias del universo real ya se incorporaron al proceso |
+| K6c Fuga | Operaciones que una agencia ya incorporada sigue haciendo por su cuenta |
+| K7 Eficiencia | Ops/persona-día (incluye apoyo rotativo) vs. ritmo del mes pico de referencia |
+| K8 Extornos | Tasa de reversiones sobre el TOTAL de operaciones, separando error de usuario/sistema/cliente |
+| K9 Aperturas y Abonos | Volumen de aperturas de cuenta y abonos de sueldo que ejecuta el equipo |
+| Empleadores CTS | Empresas distintas atendidas en CTS |
+| Tiempo estimado | Horas de trabajo estimadas a partir del volumen (auxiliar, no numerado) |
 | Buzón | Demanda de solicitudes por tipo y por persona asignada |
 
 La hoja **Explicación** del Excel generado documenta la fórmula y la fuente
 exacta de cada indicador.
+
+## Metodología
+
+Este proyecto pasó por dos versiones. La primera calculaba los indicadores
+de forma directa; la segunda corrige varios supuestos que sonaban razonables
+pero no sobrevivían al contacto con datos reales de varios meses seguidos.
+Los datos ficticios de `generar_datos_demo.py` reproducen a propósito estos
+mismos casos, para que se puedan ver funcionando sin exponer información real:
+
+- **No todos los meses son comparables.** Un mes piloto (pocos días de
+  actividad) o un mes con sobretiempo (más días trabajados que días hábiles,
+  ej. una avalancha estacional) no pueden ser la vara con la que se mide la
+  capacidad del equipo — `clasificar_meses()` los marca como PARCIAL/ATIPICO
+  y los excluye del "mes pico de referencia" de K7. Un mes con el reporte
+  cortado a mitad de camino (EN CURSO) tampoco se congela en el histórico.
+- **El personal de apoyo rotativo distorsiona la productividad si no se
+  cuenta bien.** Si el numerador de un indicador de productividad cuenta las
+  operaciones de todos los que trabajaron, pero el denominador (persona-días)
+  solo cuenta a la plantilla fija, el trabajo del apoyo se le atribuye a la
+  plantilla — inflando su ritmo de forma artificial. La corrección es incluir
+  a todos los que efectivamente trabajaron en ambos lados del cálculo.
+- **"Cuántas agencias ya se sumaron" y "cuánto de eso lo hace el equipo" son
+  dos preguntas distintas.** Medirlas con el mismo número (K6 original)
+  esconde la que realmente importa: con cobertura al 100%, lo que queda vivo
+  como indicador es la fuga residual (K6c) — quién sigue procesando por su
+  cuenta pese a estar ya incorporado.
+- **El universo de un proceso no siempre es "toda la red".** Un proceso que
+  requiere convenio con el empleador (como Pago Lote) solo aplica a las
+  agencias que lo tienen; medir su cobertura contra el total de agencias da
+  un número artificialmente bajo y esconde que, dentro de su universo real,
+  el proceso puede estar completo.
+- **Los totales quedan como fórmulas de Excel, no como valores pegados.**
+  Así se puede verificar en el propio libro que un total efectivamente
+  cuadra con la suma de sus componentes.
 
 ## Qué NO incluye este repo
 

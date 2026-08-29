@@ -10,3 +10,6 @@
 __pycache__/
 *.pyc
 .DS_Store
+
+# Cache del modo historico (se regenera solo, no aporta al repo)
+kpis_historico_demo_cache.json
